@@ -66,8 +66,11 @@ MuJoCo comes with its own version of GLFW, so it's preferable to use that one.
 
 The easy solution is to `import mujoco_py` _before_ `import glfw`.
 ''')
+    lib_path = mujoco_path
+    # in case we have  /bin
+    if "bin" not in lib_path:
+        lib_path = os.path.join(mujoco_path, "bin")
 
-    lib_path = os.path.join(mujoco_path, "bin")
     if sys.platform == 'darwin':
         Builder = MacExtensionBuilder
     elif sys.platform == 'linux':
@@ -197,30 +200,91 @@ def manually_link_libraries(mujoco_path, raw_cext_dll_path):
     return final_cext_dll_path
 
 
-class MujocoExtensionBuilder():
+def get_include_dir(mujoco_path):
+    """
+    """
+    # new include dir in mujoco has sub dir
+    old_include_dir = join(mujoco_path, 'include')
+    if not os.path.isdir(old_include_dir):
+        print("WARNING can't find include directory", old_include_dir)
 
+    actual_include_dir = old_include_dir
+    if not os.path.isfile(os.path.join(old_include_dir, 'mujoco.h')):
+        new_include_dir = os.path.join(old_include_dir, "mujoco")
+        if os.path.isfile(os.path.join(new_include_dir, 'mujoco.h')):
+            actual_include_dir = new_include_dir
+
+    return actual_include_dir
+
+
+class MujocoExtensionBuilder():
     CYMJ_DIR_PATH = abspath(dirname(__file__))
 
     def __init__(self, mujoco_path):
+
+        print("Using mujoco path", mujoco_path)
+        _extra_linker_args = None
+        if sys.platform.startswith("win"):
+            # win default
+            _extra_compile_args = ['/openmp']
+            # add dll trusted
+            os.add_dll_directory(os.path.join(mujoco_path, "bin"))
+
+            # overwrite from environment
+            # set MUJOCO_COMPILE_EXTRA="/openmp /otherflags"
+            _env_compile_extra_args = os.getenv('MUJOCO_COMPILE_EXTRA')
+            _env_linker_extra_args = os.getenv('MUJOCO_LINKER_EXTRA')
+
+            if _env_compile_extra_args is not None and len(_env_compile_extra_args) > 0:
+                _env_compile_extra_args = _env_compile_extra_args.split()
+            if _env_linker_extra_args is not None and len(_env_linker_extra_args) > 0:
+                _env_linker_extra_args = _env_linker_extra_args.split()
+        else:
+            _extra_compile_args = [
+                '-fopenmp',  # needed for OpenMP
+                '-w',  # suppress numpy compilation warnings
+            ]
+            _extra_linker_args = ['-fopenmp']
+
+        # in case we need add something else
+        # 2.1.1 mujoco lib in lib folder older release use bin
+        libs_dir = [join(mujoco_path, 'bin'), join(mujoco_path, 'lib')]
+
+        # depend on distro 2.1.1 default lib name mujoco.lib
+        generated_libs = []
+        for d in libs_dir:
+            generated_libs += [os.path.splitext(x)[0] for x in os.listdir(d) if x.endswith('.lib')]
+
+        # new include dir in mujoco
+        old_include_dir = join(mujoco_path, 'include')
+        if not os.path.isdir(old_include_dir):
+            print("WARNING can't find include directory", old_include_dir)
+
+        actual_include_dir = old_include_dir
+        if not os.path.isfile(os.path.join(old_include_dir, 'mujoco.h')):
+            new_include_dir = os.path.join(old_include_dir, "mujoco")
+            if os.path.isfile(os.path.join(new_include_dir, 'mujoco.h')):
+                actual_include_dir = new_include_dir
+
         self.mujoco_path = mujoco_path
         python_version = str(sys.version_info.major) + str(sys.version_info.minor)
         self.version = '%s_%s_%s' % (get_version(), python_version, self.build_base())
+
         self.extension = Extension(
-            'mujoco_py.cymj',
-            sources=[join(self.CYMJ_DIR_PATH, "cymj.pyx")],
-            include_dirs=[
-                self.CYMJ_DIR_PATH,
-                join(mujoco_path, 'include'),
-                np.get_include(),
-            ],
-            libraries=['mujoco210'],
-            library_dirs=[join(mujoco_path, 'bin')],
-            extra_compile_args=[
-                '-fopenmp',  # needed for OpenMP
-                '-w',  # suppress numpy compilation warnings
-            ],
-            extra_link_args=['-fopenmp'],
-            language='c')
+                'mujoco_py.cymj',
+                sources=[join(self.CYMJ_DIR_PATH, "cymj.pyx")],
+                include_dirs=[
+                    self.CYMJ_DIR_PATH,
+                    actual_include_dir,
+                    old_include_dir,
+                    np.get_include(),
+                ],
+                libraries=generated_libs,
+                library_dirs=libs_dir,
+                extra_compile_args=_extra_compile_args,
+                extra_link_args=_extra_linker_args,
+                # define_macros=[('NPY_NO_DEPRECATED_API', 'NPY_1_7_API_VERSION')],
+                language='c')
 
     def build(self):
         built_so_file_path = self._build_impl()
@@ -269,8 +333,7 @@ class LinuxCPUExtensionBuilder(MujocoExtensionBuilder):
     def __init__(self, mujoco_path):
         super().__init__(mujoco_path)
 
-        self.extension.sources.append(
-            join(self.CYMJ_DIR_PATH, "gl", "osmesashim.c"))
+        self.extension.sources.append(join(self.CYMJ_DIR_PATH, "gl", "osmesashim.c"))
         self.extension.libraries.extend(['glewosmesa', 'OSMesa', 'GL'])
         self.extension.runtime_library_dirs = [join(mujoco_path, 'bin')]
 
@@ -331,10 +394,10 @@ class MacExtensionBuilder(MujocoExtensionBuilder):
                     break
             if available_c_compiler is None:
                 raise RuntimeError(
-                    'Could not find supported GCC executable.\n\n'
-                    'HINT: On OS X, install GCC 9.x with '
-                    '`brew install gcc@9`. or '
-                    '`port install gcc9`.')
+                        'Could not find supported GCC executable.\n\n'
+                        'HINT: On OS X, install GCC 9.x with '
+                        '`brew install gcc@9`. or '
+                        '`port install gcc9`.')
             os.environ['CC'] = available_c_compiler
 
             so_file_path = super()._build_impl()
@@ -483,7 +546,7 @@ def build_callback_fn(function_string, userdata_names=[]):
     ffibuilder.set_source(name, source_string,
                           include_dirs=[join(mujoco_path, 'include')],
                           library_dirs=[join(mujoco_path, 'bin')],
-                          libraries=['mujoco210'])
+                          libraries=['mujoco230'])
     # Catch compilation exceptions so we can cleanup partial files in that case
     try:
         library_path = ffibuilder.compile(verbose=True)

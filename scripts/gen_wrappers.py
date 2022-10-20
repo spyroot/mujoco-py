@@ -538,7 +538,13 @@ def get_funcs(fname):
 
 
 def main():
-    HEADER_DIR = os.path.expanduser(os.path.join('~', '.mujoco', 'mujoco210', 'include'))
+    dot_mujoco = os.path.expanduser(os.path.join('~', '.mujoco'))
+    sub_folders = [f.path for f in os.scandir(dot_mujoco) if f.is_dir()]
+    if 'mujoco230' in sub_folders:
+        HEADER_DIR = os.path.expanduser(os.path.join('~', '.mujoco', 'mujoco230', 'include', 'mujoco'))
+    else:
+        HEADER_DIR = os.path.expanduser(os.path.join('~', '.mujoco', 'mujoco210', 'include'))
+
     HEADER_FILES = [
         'mjmodel.h',
         'mjdata.h',

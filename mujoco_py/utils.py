@@ -64,11 +64,17 @@ def discover_mujoco():
     Currently assumes path is in ~/.mujoco
 
     Returns:
-    - mujoco_path (str): Path to MuJoCo 2.1 directory.
+    - mujoco_path (str): Path to MuJoCo 2.3 directory.
     """
     mujoco_path = os.getenv('MUJOCO_PY_MUJOCO_PATH')
+    # if path point to a bin
+    if mujoco_path is not None and "bin" in mujoco_path:
+        true_path, _ = os.path.split(mujoco_path)
+        mujoco_path = true_path
+    
     if not mujoco_path:
-        mujoco_path = join(expanduser('~'), '.mujoco', 'mujoco210')
+        mujoco_path = join(expanduser('~'), '.mujoco', 'mujoco230')
+
 
     # We get lots of github issues that seem to be missing these
     # so check that mujoco is really there and raise errors if not.
